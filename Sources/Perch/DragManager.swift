@@ -221,7 +221,7 @@ final class DragManager {
               CFGetTypeID(val) == AXValueGetTypeID()
         else { return nil }
         var pt = CGPoint.zero
-        AXValueGetValue(val as! AXValue, .cgPoint, &pt)
+        guard AXValueGetValue(val as! AXValue, .cgPoint, &pt) else { return nil }
         return pt
     }
 

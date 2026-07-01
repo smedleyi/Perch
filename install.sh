@@ -20,9 +20,6 @@ chmod +x "$BUNDLE/Contents/MacOS/Perch"
 cp Info.plist "$BUNDLE/Contents/Info.plist"
 cp AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
 
-# Clear saved hotkey bindings so new defaults take effect
-defaults delete com.isaac.perch hotkeyBindings 2>/dev/null || true
-
 echo "Signing..."
 codesign --force --deep --sign - \
   --identifier "com.isaac.perch" \
