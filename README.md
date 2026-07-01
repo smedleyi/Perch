@@ -43,13 +43,21 @@ All hotkeys are remappable from Preferences.
 
 ## Installation
 
+One-liner (clones to a temp dir, builds, installs, cleans up):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/smedleyi/Perch/main/install.sh | bash
+```
+
+Or clone and run locally:
+
 ```bash
 git clone git@github.com:smedleyi/Perch.git
 cd Perch
 bash install.sh
 ```
 
-`install.sh` builds a release binary, assembles `Perch.app` in `/Applications`, ad-hoc signs it, and launches it. Subsequent runs reinstall over the existing copy.
+Either way, `install.sh` builds a release binary, assembles `Perch.app` in `/Applications`, ad-hoc signs it, and launches it. Subsequent runs reinstall over the existing copy.
 
 On first launch, macOS will prompt for Accessibility access. Grant it in **System Settings › Privacy & Security › Accessibility**, then relaunch.
 
