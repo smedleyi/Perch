@@ -98,8 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func hideMenuBarIconAction() {
         hideMenuBarIcon()
-        // Open Preferences so the user has an immediate way to restore the icon.
-        openPreferences()
     }
 
     @objc func openPreferences() {
