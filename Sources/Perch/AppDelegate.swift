@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var prefsController: PreferencesWindowController?
+    private var quitShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         promptForAccessibilityIfNeeded()
@@ -11,10 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             setupMenuBar()
             updateMenuBarStatus()
         }
+        installQuitShortcut()
     }
 
     // Clicking the Dock icon (visible when menu bar icon is hidden) reopens Preferences.
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool)
+        -> Bool
+    {
         openPreferences()
         return true
     }
@@ -35,8 +39,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Private
 
+    // .accessory apps have no app menu bar, so Cmd+Q isn't wired up by the
+    // system. Catch it ourselves whenever one of our windows (e.g. Preferences) is key.
+    // The returned monitor must be retained — otherwise ARC releases it immediately
+    // and the shortcut silently stops working.
+    private func installQuitShortcut() {
+        quitShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "q" {
+                NSApp.terminate(nil)
+                return nil
+            }
+            return event
+        }
+    }
+
     private func promptForAccessibilityIfNeeded() {
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary
+        let opts =
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary
         guard !AXIsProcessTrustedWithOptions(opts) else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -55,7 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Later")
             if alert.runModal() == .alertFirstButtonReturn {
                 NSWorkspace.shared.open(
-                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+                    URL(
+                        string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                    )!
                 )
             }
         }
@@ -66,16 +88,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        let prefsItem = NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
+        let prefsItem = NSMenuItem(
+            title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
         prefsItem.target = self
         menu.addItem(prefsItem)
 
-        let hideItem = NSMenuItem(title: "Hide Menu Bar Icon", action: #selector(hideMenuBarIconAction), keyEquivalent: "")
+        let hideItem = NSMenuItem(
+            title: "Hide Menu Bar Icon", action: #selector(hideMenuBarIconAction), keyEquivalent: ""
+        )
         hideItem.target = self
         menu.addItem(hideItem)
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Perch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(
+            NSMenuItem(
+                title: "Quit Perch", action: #selector(NSApplication.terminate(_:)),
+                keyEquivalent: "q"))
 
         statusItem?.menu = menu
     }
