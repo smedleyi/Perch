@@ -2,7 +2,7 @@
 
 A lightweight native macOS window snapping utility. Hold a modifier key and drag any window from anywhere — no title bar required. Release the modifier mid-drag and push to a screen edge to snap. Or use customisable keyboard hotkeys with Windows-style chaining.
 
-No Electron, no subscriptions. Pure Swift, ~1200 lines.
+Pure Swift, ~1200 lines.
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5.9-orange)
 
