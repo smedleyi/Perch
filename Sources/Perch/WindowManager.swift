@@ -135,21 +135,21 @@ final class WindowManager {
         }
     }
 
-    // The target when a transition would land on a plain Half: upgraded to the
-    // matching Two Thirds span if the complementary third is occupied (they tile
-    // together against it); otherwise, if the third *on the same side* as that Half is
-    // occupied, a plain Half would overlap it, so Centre Third is the better stop —
-    // adjacent to it instead of on top of it. Only falls through to the plain Half
-    // when neither third is occupied.
+    // The target when a transition would land on a plain Half: if the third *on the
+    // same side* as that Half is occupied, ANY target starting there (Half or Two
+    // Thirds) would overlap it, so Centre Third wins outright — checked first,
+    // regardless of what else is occupied. Only once that's ruled out does the
+    // complementary third get a say: occupied, it upgrades to the matching Two Thirds
+    // span (they tile together against it); otherwise, the plain Half.
     private static func halfOrTwoThirds(_ direction: Direction, _ occupiedThirds: Set<HState>) -> HState {
         switch direction {
         case .left:
-            if occupiedThirds.contains(.rightThird) { return .leftTwoThirds }
             if occupiedThirds.contains(.leftThird)  { return .centerThird }
+            if occupiedThirds.contains(.rightThird) { return .leftTwoThirds }
             return .leftHalf
         case .right:
-            if occupiedThirds.contains(.leftThird)  { return .rightTwoThirds }
             if occupiedThirds.contains(.rightThird) { return .centerThird }
+            if occupiedThirds.contains(.leftThird)  { return .rightTwoThirds }
             return .rightHalf
         }
     }
@@ -315,6 +315,21 @@ final class WindowManager {
         } else {
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posVal)
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
+        }
+
+        // Some apps silently drop one of the two attribute writes above instead of
+        // applying both — the window is then stuck in a hybrid of the old and new
+        // geometry (e.g. the new position but the old size). Verify the result and, if
+        // it didn't fully take, retry once with the opposite order in case the app
+        // rejected that specific ordering rather than the values themselves.
+        if let result = currentAppKitFrame(of: window), !Self.framesMatch(result, appKitFrame) {
+            if isGrowing {
+                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posVal)
+                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
+            } else {
+                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
+                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posVal)
+            }
         }
 
         // Moving a window so it now overlaps another can cause the OS to reconsider key
