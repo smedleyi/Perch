@@ -1,6 +1,6 @@
 # Perch
 
-A lightweight native macOS window snapping utility. Hold a modifier key and drag any window from anywhere — no title bar required. Release the modifier mid-drag and push to a screen edge to snap. Or use customisable keyboard hotkeys with Windows-style chaining.
+A lightweight native macOS window snapping utility. Hold a modifier key and drag any window from anywhere — no title bar required. Release the modifier mid-drag and push to a screen edge to snap. Or use customisable keyboard hotkeys that replicate Windows Snap's cycling behaviour.
 
 Pure Swift, ~1200 lines.
 
@@ -14,7 +14,7 @@ Pure Swift, ~1200 lines.
 - **Zone snapping** — while dragging with the modifier held, move toward a screen edge or corner to see a snap preview; release the mouse to apply
 - **Edge snapping** — release the modifier mid-drag and push the cursor to a screen edge to trigger native-feel snapping
 - **Keyboard hotkeys** — snap the focused window with key combos; fully customisable in Preferences
-- **Chaining** — press the same hotkey twice to cycle through related positions (e.g. Left Half → Bottom Left Quarter → Left Half)
+- **Windows Snap-style cycling** — ⌥← / ⌥→ cycle Full Screen → Half → Third (e.g. Left Half → Left Third), independent of any other window on screen
 - **Multi-monitor** — snaps to whichever screen the cursor is on
 - **Menu bar only** — no Dock icon; hides completely to the background with an optional "Hide Menu Bar Icon" mode
 
@@ -71,7 +71,7 @@ Select **Hide Menu Bar Icon** from the menu bar to remove the icon entirely. Per
 |---|---|
 | `DragManager.swift` | Global mouse event tap; tracks modifier+drag, fires snap preview, applies on mouseUp |
 | `HotkeyManager.swift` | Global keyboard event tap; matches hotkeys, suppresses arrow keys during drag |
-| `WindowManager.swift` | AXUIElement reads/writes; snap chaining state machine |
+| `WindowManager.swift` | AXUIElement reads/writes; stateless Windows-Snap-style transition machine |
 | `SnapAction.swift` | Enum of snap positions; `targetFrame(in:)` for AppKit-coordinate output |
 | `SnapPreviewWindow.swift` | Borderless overlay window showing the snap target |
 | `Config.swift` | UserDefaults-backed settings: drag modifier, hotkey bindings |

@@ -189,29 +189,7 @@ final class DragManager {
     // MARK: - AX helpers (Quartz / top-left-origin coordinates)
 
     private func axWindow(at point: CGPoint) -> AXUIElement? {
-        let system = AXUIElementCreateSystemWide()
-        var element: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &element) == .success,
-              let element
-        else { return nil }
-        return walkToWindow(element)
-    }
-
-    private func walkToWindow(_ element: AXUIElement) -> AXUIElement? {
-        var current = element
-        for _ in 0..<30 {
-            var roleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(current, kAXRoleAttribute as CFString, &roleRef)
-            if (roleRef as? String) == kAXWindowRole { return current }
-
-            var parentRef: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentRef) == .success,
-                  let parent = parentRef,
-                  CFGetTypeID(parent) == AXUIElementGetTypeID()
-            else { return nil }
-            current = parent as! AXUIElement
-        }
-        return nil
+        AX.window(at: point)
     }
 
     private func quartzPosition(of window: AXUIElement) -> CGPoint? {
