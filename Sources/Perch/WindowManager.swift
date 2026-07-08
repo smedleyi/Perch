@@ -16,10 +16,32 @@ final class WindowManager {
 
     private enum Direction { case left, right }
 
+    // The same eight-zone machine, mirrored onto the vertical axis for Top/Bottom Half
+    // (⌃⌥T / ⌃⌥B). Kept as a separate enum/table rather than unifying with HState so the
+    // already-validated horizontal logic above is never touched by this addition — see
+    // vTransition(_:_:occupiedThirds:) for the mechanical left→top, right→bottom mapping.
+    private enum VState: CaseIterable {
+        case fullScreen, topHalf, bottomHalf, topThird, middleThird, bottomThird
+        case topTwoThirds, bottomTwoThirds
+    }
+
+    private enum VDirection { case up, down }
+
     @discardableResult
     func snap(_ action: SnapAction) -> Bool {
         guard let window = focusedWindow() else { return false }
         guard let screen = screenFor(window: window) ?? NSScreen.main else { return false }
+
+        // Combo presses: a half refined by Maximize/Center becomes the matching
+        // quarter, a quarter refined by the opposite-side half hotkey moves laterally
+        // to the matching quarter, and a quarter refined by whichever of Maximize/
+        // Center it ISN'T already using collapses back to a half. Checked directly
+        // against live geometry, same as everything else here — nothing about the
+        // previous press is remembered.
+        if let combo = quarterCombo(action, window: window, screen: screen) {
+            setFrame(combo.targetFrame(in: screen), for: window, on: screen)
+            return true
+        }
 
         if let direction = Self.direction(of: action) {
             // A window not currently sitting in one of the eight zones (never snapped,
@@ -37,11 +59,11 @@ final class WindowManager {
                 let mirrored: HState = direction == .left ? .rightThird : .leftThird
                 // Different monitors can have different resolutions, so height changes
                 // too — always resize before repositioning here (rather than the
-                // width-only heuristic setFrame otherwise uses), so the window is
-                // already the right height while it's still safely on the old screen,
-                // instead of landing on the new one at the old height and risking
-                // getting constrained to whichever screen is shorter.
-                setFrame(rect(for: mirrored, in: neighbor), for: window, sizeFirst: true)
+                // area-growth heuristic setFrame otherwise uses), so the window is
+                // already the right size while it's still safely on the old screen,
+                // instead of landing on the new one at the old size and risking
+                // getting constrained to whichever screen is smaller.
+                setFrame(rect(for: mirrored, in: neighbor), for: window, on: neighbor, sizeFirst: true)
                 return true
             }
 
@@ -51,20 +73,36 @@ final class WindowManager {
             // Third or a Two Thirds span is reachable at all, and which one wins.
             let occupied = occupiedThirds(excluding: window, on: screen)
             let next = Self.transition(current, direction, occupiedThirds: occupied)
-            setFrame(rect(for: next, in: screen), for: window)
+            setFrame(rect(for: next, in: screen), for: window, on: screen)
             return true
         }
 
-        // Every other hotkey (maximize, center, quarters, top/bottom half) is a fixed
-        // target — it doesn't chain off whatever the window was doing before.
-        setFrame(action.targetFrame(in: screen), for: window)
+        if let vDirection = Self.vDirection(of: action) {
+            let current = vCurrentState(of: window, on: screen) ?? .fullScreen
+
+            if (current == .topThird && vDirection == .up) || (current == .bottomThird && vDirection == .down),
+               let neighbor = vAdjacentScreen(to: screen, direction: vDirection) {
+                let mirrored: VState = vDirection == .up ? .bottomThird : .topThird
+                setFrame(vRect(for: mirrored, in: neighbor), for: window, on: neighbor, sizeFirst: true)
+                return true
+            }
+
+            let occupied = vOccupiedThirds(excluding: window, on: screen)
+            let next = Self.vTransition(current, vDirection, occupiedThirds: occupied)
+            setFrame(vRect(for: next, in: screen), for: window, on: screen)
+            return true
+        }
+
+        // Every other hotkey (maximize, center, quarters) is a fixed target — it
+        // doesn't chain off whatever the window was doing before.
+        setFrame(action.targetFrame(in: screen), for: window, on: screen)
         return true
     }
 
     // Direct snap from drag — skips focusedWindow() lookup. Always a fixed target, same
     // as the keyboard path for non-directional actions.
     func applySnap(_ action: SnapAction, to window: AXUIElement, on screen: NSScreen) {
-        setFrame(action.targetFrame(in: screen), for: window)
+        setFrame(action.targetFrame(in: screen), for: window, on: screen)
     }
 
     // MARK: - Transition table
@@ -154,6 +192,71 @@ final class WindowManager {
         }
     }
 
+    // MARK: - Vertical transition table (mechanical mirror of the one above: left→top,
+    // right→bottom). See the comments on transition(_:_:occupiedThirds:) and
+    // halfOrTwoThirds(_:_:) for the reasoning — identical here, just on the other axis.
+
+    private static func vDirection(of action: SnapAction) -> VDirection? {
+        switch action {
+        case .topHalf:    return .up
+        case .bottomHalf: return .down
+        default:          return nil
+        }
+    }
+
+    private static func vTransition(_ state: VState, _ direction: VDirection, occupiedThirds: Set<VState>) -> VState {
+        switch (state, direction) {
+        case (.fullScreen,      .up):   return vHalfOrTwoThirds(.up, occupiedThirds)
+        case (.fullScreen,      .down): return vHalfOrTwoThirds(.down, occupiedThirds)
+
+        case (.topHalf,         .up):   return .topThird
+        case (.topHalf,         .down):
+            if occupiedThirds.contains(.bottomThird) { return .topTwoThirds }
+            return vHalfOrTwoThirds(.down, occupiedThirds)
+
+        case (.bottomHalf,      .up):
+            if occupiedThirds.contains(.topThird) { return .bottomTwoThirds }
+            return vHalfOrTwoThirds(.up, occupiedThirds)
+        case (.bottomHalf,      .down): return .bottomThird
+
+        case (.topThird,        .up):   return .topThird
+        case (.topThird,        .down):
+            if occupiedThirds.contains(.bottomThird) { return .topHalf }
+            if !occupiedThirds.isEmpty { return .middleThird }
+            return .topHalf
+
+        case (.middleThird,     .up):
+            return occupiedThirds.contains(.topThird) ? .topHalf : .topThird
+        case (.middleThird,     .down):
+            return occupiedThirds.contains(.bottomThird) ? .bottomHalf : .bottomThird
+
+        case (.bottomThird,     .up):
+            if occupiedThirds.contains(.topThird) { return .bottomHalf }
+            if !occupiedThirds.isEmpty { return .middleThird }
+            return .bottomHalf
+        case (.bottomThird,     .down): return .bottomThird
+
+        case (.topTwoThirds,    .up):   return .topHalf
+        case (.topTwoThirds,    .down): return vHalfOrTwoThirds(.down, occupiedThirds)
+
+        case (.bottomTwoThirds, .up):   return vHalfOrTwoThirds(.up, occupiedThirds)
+        case (.bottomTwoThirds, .down): return .bottomHalf
+        }
+    }
+
+    private static func vHalfOrTwoThirds(_ direction: VDirection, _ occupiedThirds: Set<VState>) -> VState {
+        switch direction {
+        case .up:
+            if occupiedThirds.contains(.topThird)    { return .middleThird }
+            if occupiedThirds.contains(.bottomThird) { return .topTwoThirds }
+            return .topHalf
+        case .down:
+            if occupiedThirds.contains(.bottomThird) { return .middleThird }
+            if occupiedThirds.contains(.topThird)    { return .bottomTwoThirds }
+            return .bottomHalf
+        }
+    }
+
     // MARK: - State <-> geometry
 
     private func rect(for state: HState, in screen: NSScreen) -> NSRect {
@@ -180,7 +283,119 @@ final class WindowManager {
 
     private func currentState(of window: AXUIElement, on screen: NSScreen) -> HState? {
         guard let frame = currentAppKitFrame(of: window) else { return nil }
-        return HState.allCases.first { Self.framesMatch(frame, rect(for: $0, in: screen)) }
+        // Width is the axis that shrinks across this family (Half → Third); height is
+        // always meant to be full-span, so it stays exact.
+        return HState.allCases.first {
+            Self.zoneMatch(frame, rect(for: $0, in: screen), looseWidth: true, looseHeight: false)
+        }
+    }
+
+    private static let quarters: [SnapAction] = [
+        .topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter,
+    ]
+
+    private func currentQuarter(of window: AXUIElement, on screen: NSScreen) -> SnapAction? {
+        guard let frame = currentAppKitFrame(of: window) else { return nil }
+        // Both axes are already half-span for a quarter, so either can be the one an
+        // app's minimum size clamps taller/wider.
+        return Self.quarters.first {
+            Self.zoneMatch(frame, $0.targetFrame(in: screen), looseWidth: true, looseHeight: true)
+        }
+    }
+
+    // Whether the window is currently anchored to the left or right side at all —
+    // Half, Third, or Two Thirds — not just exactly Half. The horizontal system is a
+    // whole cycling state machine now (unlike the old one-shot Left/Right), so a Left
+    // press doesn't always land exactly on Left Half; the combo below needs to fire
+    // from anywhere in that cycle, not just that one specific stage.
+    private func currentHorizontalAnchor(of window: AXUIElement, on screen: NSScreen) -> Direction? {
+        switch currentState(of: window, on: screen) {
+        case .leftHalf, .leftThird, .leftTwoThirds:   return .left
+        case .rightHalf, .rightThird, .rightTwoThirds: return .right
+        default: return nil
+        }
+    }
+
+    // See the call site in snap(_:) for what each combo restores.
+    private func quarterCombo(_ action: SnapAction, window: AXUIElement, screen: NSScreen) -> SnapAction? {
+        switch action {
+        case .maximize:
+            switch currentHorizontalAnchor(of: window, on: screen) {
+            case .left:  return .topLeftQuarter
+            case .right: return .topRightQuarter
+            case nil: break
+            }
+            // Vertically anchored but not yet at the Half stage (Top/Bottom Third or Two
+            // Thirds) — collapse to the matching Half first rather than jumping straight
+            // to Full Screen. Once already at Top/Bottom Half, this doesn't match, so a
+            // second Maximize press falls through to the plain fixed-target Full Screen
+            // below, same as everywhere else with no anchor.
+            switch vCurrentState(of: window, on: screen) {
+            case .topThird, .topTwoThirds:       return .topHalf
+            case .bottomThird, .bottomTwoThirds: return .bottomHalf
+            default: break
+            }
+            switch currentQuarter(of: window, on: screen) {
+            case .bottomLeftQuarter:  return .leftHalf
+            case .bottomRightQuarter: return .rightHalf
+            default: return nil
+            }
+        case .center:
+            switch currentHorizontalAnchor(of: window, on: screen) {
+            case .left:  return .bottomLeftQuarter
+            case .right: return .bottomRightQuarter
+            case nil: break
+            }
+            switch currentQuarter(of: window, on: screen) {
+            case .topLeftQuarter:  return .leftHalf
+            case .topRightQuarter: return .rightHalf
+            default: return nil
+            }
+        case .leftHalf:
+            switch currentQuarter(of: window, on: screen) {
+            case .topRightQuarter:    return .topLeftQuarter
+            case .bottomRightQuarter: return .bottomLeftQuarter
+            default: return nil
+            }
+        case .rightHalf:
+            switch currentQuarter(of: window, on: screen) {
+            case .topLeftQuarter:    return .topRightQuarter
+            case .bottomLeftQuarter: return .bottomRightQuarter
+            default: return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    private func vRect(for state: VState, in screen: NSScreen) -> NSRect {
+        let f = screen.visibleFrame
+        switch state {
+        case .fullScreen:
+            return f
+        case .topHalf:
+            return NSRect(x: f.minX, y: f.midY, width: f.width, height: f.height / 2)
+        case .bottomHalf:
+            return NSRect(x: f.minX, y: f.minY, width: f.width, height: f.height / 2)
+        case .topThird:
+            return NSRect(x: f.minX, y: f.minY + 2 * f.height / 3, width: f.width, height: f.height / 3)
+        case .middleThird:
+            return NSRect(x: f.minX, y: f.minY + f.height / 3, width: f.width, height: f.height / 3)
+        case .bottomThird:
+            return NSRect(x: f.minX, y: f.minY, width: f.width, height: f.height / 3)
+        case .topTwoThirds:
+            return NSRect(x: f.minX, y: f.minY + f.height / 3, width: f.width, height: f.height * 2 / 3)
+        case .bottomTwoThirds:
+            return NSRect(x: f.minX, y: f.minY, width: f.width, height: f.height * 2 / 3)
+        }
+    }
+
+    private func vCurrentState(of window: AXUIElement, on screen: NSScreen) -> VState? {
+        guard let frame = currentAppKitFrame(of: window) else { return nil }
+        // Mirror of currentState: height is the shrinking axis here, width stays exact.
+        return VState.allCases.first {
+            Self.zoneMatch(frame, vRect(for: $0, in: screen), looseWidth: false, looseHeight: true)
+        }
     }
 
     // Apps often can't take an exact frame (grid-snapping terminals, minimum window
@@ -190,21 +405,59 @@ final class WindowManager {
             && abs(a.width - b.width) < tolerance && abs(a.height - b.height) < tolerance
     }
 
-    // Which of Left/Centre/Right Third another window — from any app, checked live
-    // rather than tracked — currently occupies on this screen. A single CGWindowList
-    // query covers every on-screen window in one shot, rather than walking each running
-    // app's AX tree (which would mean a blocking IPC round-trip per app on every press).
+    // Recognizing which zone a window is CURRENTLY sitting in needs to be more forgiving
+    // than framesMatch: some apps enforce a minimum window size larger than a requested
+    // zone (a Third or a Quarter is often smaller than an app's minimum), so the axis
+    // that's supposed to shrink lands larger than asked instead of matching exactly —
+    // e.g. a Bottom Right Quarter that can't shrink below the app's minimum height. Since
+    // we set position exactly and a clamp only ever makes a dimension LARGER than
+    // requested (never smaller), a shrinking axis is allowed to exceed the candidate;
+    // position and any axis that's meant to stay full-span (not shrinking for this
+    // family of zones) still must match tightly.
+    private static func zoneMatch(
+        _ actual: NSRect, _ candidate: NSRect, looseWidth: Bool, looseHeight: Bool, tolerance: CGFloat = 10
+    ) -> Bool {
+        guard abs(actual.minX - candidate.minX) < tolerance, abs(actual.minY - candidate.minY) < tolerance
+        else { return false }
+        let widthOK =
+            looseWidth
+            ? actual.width >= candidate.width - tolerance
+            : abs(actual.width - candidate.width) < tolerance
+        let heightOK =
+            looseHeight
+            ? actual.height >= candidate.height - tolerance
+            : abs(actual.height - candidate.height) < tolerance
+        return widthOK && heightOK
+    }
+
+    // Which of Left/Centre/Right Third another window currently occupies on this screen.
     private func occupiedThirds(excluding window: AXUIElement, on screen: NSScreen) -> Set<HState> {
+        let candidates: [HState] = [.leftThird, .centerThird, .rightThird]
+        return occupiedStates(among: candidates.map { ($0, rect(for: $0, in: screen)) }, excluding: window)
+    }
+
+    // Which of Top/Middle/Bottom Third another window currently occupies on this screen.
+    private func vOccupiedThirds(excluding window: AXUIElement, on screen: NSScreen) -> Set<VState> {
+        let candidates: [VState] = [.topThird, .middleThird, .bottomThird]
+        return occupiedStates(among: candidates.map { ($0, vRect(for: $0, in: screen)) }, excluding: window)
+    }
+
+    // Shared by occupiedThirds/vOccupiedThirds: which of the given candidate states —
+    // from any app, checked live rather than tracked — another on-screen window's
+    // bounds currently match. A single CGWindowList query covers every on-screen
+    // window in one shot, rather than walking each running app's AX tree (which would
+    // mean a blocking IPC round-trip per app on every press).
+    private func occupiedStates<State: Hashable>(
+        among candidates: [(State, NSRect)], excluding window: AXUIElement
+    ) -> Set<State> {
         guard let excludeFrame = currentAppKitFrame(of: window),
               let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return [] }
 
-        let candidates: [HState] = [.leftThird, .centerThird, .rightThird]
-        let candidateRects = candidates.map { ($0, rect(for: $0, in: screen)) }
         let primaryH = NSScreen.screens.first?.frame.height ?? 0
         let ownPID = ProcessInfo.processInfo.processIdentifier
 
-        var result = Set<HState>()
+        var result = Set<State>()
         for entry in list {
             guard let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
                   let ownerPID = entry[kCGWindowOwnerPID as String] as? Int, pid_t(ownerPID) != ownPID,
@@ -215,7 +468,7 @@ final class WindowManager {
 
             let appKitFrame = NSRect(x: x, y: primaryH - (y + h), width: w, height: h)
             if Self.framesMatch(appKitFrame, excludeFrame) { continue }  // this is `window` itself
-            for (state, rect) in candidateRects where Self.framesMatch(appKitFrame, rect) {
+            for (state, rect) in candidates where Self.framesMatch(appKitFrame, rect) {
                 result.insert(state)
             }
         }
@@ -288,11 +541,29 @@ final class WindowManager {
         }
     }
 
+    // Same as adjacentScreen(to:direction:), mirrored onto the vertical axis: the
+    // nearest monitor positioned immediately above/below this one. AppKit's Y axis
+    // increases upward, so "up" means a higher minY.
+    private func vAdjacentScreen(to screen: NSScreen, direction: VDirection) -> NSScreen? {
+        let tolerance: CGFloat = 2
+        let others = NSScreen.screens.filter { $0 !== screen }
+        switch direction {
+        case .up:
+            return others
+                .filter { $0.frame.minY >= screen.frame.maxY - tolerance }
+                .min { $0.frame.minY < $1.frame.minY }
+        case .down:
+            return others
+                .filter { $0.frame.maxY <= screen.frame.minY + tolerance }
+                .max { $0.frame.maxY < $1.frame.maxY }
+        }
+    }
+
     // Accepts an AppKit-coordinate rect and applies it via AXUIElement (Quartz coords).
     // sizeFirst overrides the automatic order detection below — pass true when the
-    // move crosses screens of different resolutions, where a width-only comparison
-    // isn't enough to pick the safe order (see the cross-monitor call site).
-    private func setFrame(_ appKitFrame: NSRect, for window: AXUIElement, sizeFirst: Bool? = nil) {
+    // move crosses screens of different resolutions, where an area-only comparison
+    // isn't enough to pick the safe order (see the cross-monitor call sites).
+    private func setFrame(_ appKitFrame: NSRect, for window: AXUIElement, on screen: NSScreen, sizeFirst: Bool? = nil) {
         let primaryH = NSScreen.screens.first?.frame.height ?? 0
         var pos = CGPoint(x: appKitFrame.minX, y: primaryH - appKitFrame.maxY)
         var size = CGSize(width: appKitFrame.width, height: appKitFrame.height)
@@ -308,7 +579,10 @@ final class WindowManager {
         // intermediate rect only ever extends past — never shrinks below — what was
         // already covered); shrinking sets position first (still at the old size, so
         // the intermediate rect fully covers the destination before shrinking into it).
-        let isGrowing = sizeFirst ?? ((currentAppKitFrame(of: window)?.width ?? 0) < appKitFrame.width)
+        // Compared by area (not just width) so this is correct for vertical moves too,
+        // where width never changes — area comparison reduces to the width-only check
+        // whenever height is constant, so horizontal moves are unaffected.
+        let isGrowing = sizeFirst ?? ((currentAppKitFrame(of: window)?.area ?? 0) < appKitFrame.area)
         if isGrowing {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posVal)
@@ -329,6 +603,33 @@ final class WindowManager {
             } else {
                 AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeVal)
                 AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posVal)
+            }
+        }
+
+        // Some apps refuse to shrink below their own minimum window size — e.g. a
+        // Bottom Third target is often shorter than an app's minimum height. Our
+        // position write already placed the requested edge, so when the size write
+        // gets silently clamped larger than asked, the leftover height spills past the
+        // opposite edge (a short bottom-zone target can end up with its excess height
+        // pushed below the screen, under the Dock, instead of clamped size growing back
+        // toward where the window came from). Re-clamp position so the window's actual
+        // (possibly-clamped) size stays fully inside the screen whenever it can fit,
+        // sacrificing exact placement on the edge the app couldn't honor rather than
+        // letting the window hang off-screen.
+        if let actual = currentAppKitFrame(of: window) {
+            let bounds = screen.visibleFrame
+            var clamped = actual.origin
+            if actual.width <= bounds.width {
+                clamped.x = min(max(actual.minX, bounds.minX), bounds.maxX - actual.width)
+            }
+            if actual.height <= bounds.height {
+                clamped.y = min(max(actual.minY, bounds.minY), bounds.maxY - actual.height)
+            }
+            if clamped != actual.origin {
+                var repos = CGPoint(x: clamped.x, y: primaryH - (clamped.y + actual.height))
+                if let reposVal = AXValueCreate(.cgPoint, &repos) {
+                    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, reposVal)
+                }
             }
         }
 

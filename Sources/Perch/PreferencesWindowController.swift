@@ -206,7 +206,11 @@ final class PreferencesWindowController: NSWindowController,
         showIconBtn.translatesAutoresizingMaskIntoConstraints = false
         cv.addSubview(showIconBtn)
 
-        let menuBarNote = NSTextField(labelWithString: "Use \"Hide Menu Bar Icon\" in the menu bar to run Perch silently in the background.")
+        let hideIconBtn = NSButton(title: "Hide Menu Bar Icon", target: self, action: #selector(hideMenuBarIcon))
+        hideIconBtn.translatesAutoresizingMaskIntoConstraints = false
+        cv.addSubview(hideIconBtn)
+
+        let menuBarNote = NSTextField(labelWithString: "Perch keeps running silently in the background while the icon is hidden.")
         menuBarNote.font = .systemFont(ofSize: 11)
         menuBarNote.textColor = .secondaryLabelColor
         menuBarNote.translatesAutoresizingMaskIntoConstraints = false
@@ -256,6 +260,9 @@ final class PreferencesWindowController: NSWindowController,
             showIconBtn.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 16),
             showIconBtn.bottomAnchor.constraint(equalTo: menuBarNote.topAnchor, constant: -6),
 
+            hideIconBtn.leadingAnchor.constraint(equalTo: showIconBtn.trailingAnchor, constant: 8),
+            hideIconBtn.centerYAnchor.constraint(equalTo: showIconBtn.centerYAnchor),
+
             menuBarNote.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 16),
             menuBarNote.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -16),
             menuBarNote.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -16),
@@ -282,6 +289,10 @@ final class PreferencesWindowController: NSWindowController,
 
     @objc private func showMenuBarIcon() {
         (NSApp.delegate as? AppDelegate)?.showMenuBarIcon()
+    }
+
+    @objc private func hideMenuBarIcon() {
+        (NSApp.delegate as? AppDelegate)?.hideMenuBarIcon()
     }
 
     // MARK: NSTableViewDataSource

@@ -14,7 +14,7 @@ Pure Swift, ~1200 lines.
 - **Zone snapping** — while dragging with the modifier held, move toward a screen edge or corner to see a snap preview; release the mouse to apply
 - **Edge snapping** — release the modifier mid-drag and push the cursor to a screen edge to trigger native-feel snapping
 - **Keyboard hotkeys** — snap the focused window with key combos; fully customisable in Preferences
-- **Windows Snap-style cycling** — ⌥← / ⌥→ cycle Full Screen → Half → Third (e.g. Left Half → Left Third), independent of any other window on screen
+- **Windows Snap-style cycling** — ⌥← / ⌥→ and ⌃⌥T / ⌃⌥B cycle Full Screen → Half → Third on either axis (e.g. Left Half → Left Third, Top Half → Top Third), independent of any other window on screen
 - **Multi-monitor** — snaps to whichever screen the cursor is on
 - **Menu bar only** — no Dock icon; hides completely to the background with an optional "Hide Menu Bar Icon" mode
 
