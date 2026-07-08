@@ -285,9 +285,9 @@ final class WindowManager {
         guard let frame = currentAppKitFrame(of: window) else { return nil }
         // Width is the axis that shrinks across this family (Half → Third); height is
         // always meant to be full-span, so it stays exact.
-        return HState.allCases.first {
-            Self.zoneMatch(frame, rect(for: $0, in: screen), looseWidth: true, looseHeight: false)
-        }
+        return Self.closestZoneMatch(
+            frame, HState.allCases.map { ($0, rect(for: $0, in: screen)) },
+            looseWidth: true, looseHeight: false)
     }
 
     private static let quarters: [SnapAction] = [
@@ -296,11 +296,24 @@ final class WindowManager {
 
     private func currentQuarter(of window: AXUIElement, on screen: NSScreen) -> SnapAction? {
         guard let frame = currentAppKitFrame(of: window) else { return nil }
+        // A window that's an EXACT match for some full-span state (a plain Half/Third/
+        // etc on either axis) can never actually be a quarter — quarters are always
+        // half-span on BOTH axes. Ruling this out first prevents the loosened,
+        // single-axis-tolerant quarter search below from mistaking a genuine Half for a
+        // "clamped" quarter that happens to share its position and one axis — e.g. Top
+        // Half exactly matches Top Left Quarter's height and position, differing only
+        // in width, which quarters loosen; with no competing quarter candidate to lose
+        // the closest-fit tie-break to, that lone false match would otherwise be
+        // accepted outright.
+        let isExactFullSpan =
+            HState.allCases.contains { Self.framesMatch(frame, rect(for: $0, in: screen)) }
+            || VState.allCases.contains { Self.framesMatch(frame, vRect(for: $0, in: screen)) }
+        guard !isExactFullSpan else { return nil }
         // Both axes are already half-span for a quarter, so either can be the one an
         // app's minimum size clamps taller/wider.
-        return Self.quarters.first {
-            Self.zoneMatch(frame, $0.targetFrame(in: screen), looseWidth: true, looseHeight: true)
-        }
+        return Self.closestZoneMatch(
+            frame, Self.quarters.map { ($0, $0.targetFrame(in: screen)) },
+            looseWidth: true, looseHeight: true)
     }
 
     // Whether the window is currently anchored to the left or right side at all —
@@ -393,9 +406,9 @@ final class WindowManager {
     private func vCurrentState(of window: AXUIElement, on screen: NSScreen) -> VState? {
         guard let frame = currentAppKitFrame(of: window) else { return nil }
         // Mirror of currentState: height is the shrinking axis here, width stays exact.
-        return VState.allCases.first {
-            Self.zoneMatch(frame, vRect(for: $0, in: screen), looseWidth: false, looseHeight: true)
-        }
+        return Self.closestZoneMatch(
+            frame, VState.allCases.map { ($0, vRect(for: $0, in: screen)) },
+            looseWidth: false, looseHeight: true)
     }
 
     // Apps often can't take an exact frame (grid-snapping terminals, minimum window
@@ -405,15 +418,6 @@ final class WindowManager {
             && abs(a.width - b.width) < tolerance && abs(a.height - b.height) < tolerance
     }
 
-    // Recognizing which zone a window is CURRENTLY sitting in needs to be more forgiving
-    // than framesMatch: some apps enforce a minimum window size larger than a requested
-    // zone (a Third or a Quarter is often smaller than an app's minimum), so the axis
-    // that's supposed to shrink lands larger than asked instead of matching exactly —
-    // e.g. a Bottom Right Quarter that can't shrink below the app's minimum height. Since
-    // we set position exactly and a clamp only ever makes a dimension LARGER than
-    // requested (never smaller), a shrinking axis is allowed to exceed the candidate;
-    // position and any axis that's meant to stay full-span (not shrinking for this
-    // family of zones) still must match tightly.
     private static func zoneMatch(
         _ actual: NSRect, _ candidate: NSRect, looseWidth: Bool, looseHeight: Bool, tolerance: CGFloat = 10
     ) -> Bool {
@@ -430,16 +434,47 @@ final class WindowManager {
         return widthOK && heightOK
     }
 
+    // Recognizing which zone a window is CURRENTLY sitting in needs to be more forgiving
+    // than an exact framesMatch: some apps enforce a minimum window size larger than a
+    // requested zone (a Third or a Quarter is often smaller than an app's minimum), so
+    // the axis that's supposed to shrink lands larger than asked instead of matching
+    // exactly — e.g. a Bottom Right Quarter that can't shrink below the app's minimum
+    // height. Since we set position exactly and a clamp only ever makes a dimension
+    // LARGER than requested (never smaller), a shrinking axis is allowed to exceed the
+    // candidate.
+    //
+    // That loosened check alone isn't enough, though: with no upper bound, a genuinely
+    // WIDER/TALLER zone can also satisfy a narrower candidate's "at least this big" check
+    // (e.g. Left Two Thirds, at 2/3 width, trivially satisfies Left Half's "width >= half,
+    // minus tolerance" test too). Picking whichever candidate is the closest size fit,
+    // rather than just the first one in declaration order, resolves this — and an exact
+    // match is always the closest possible fit (zero discrepancy), so it always wins
+    // this way with no separate exact-match pass needed.
+    private static func closestZoneMatch<T>(
+        _ frame: NSRect, _ candidates: [(T, NSRect)], looseWidth: Bool, looseHeight: Bool
+    ) -> T? {
+        candidates
+            .filter { zoneMatch(frame, $0.1, looseWidth: looseWidth, looseHeight: looseHeight) }
+            .min {
+                abs($0.1.width - frame.width) + abs($0.1.height - frame.height)
+                    < abs($1.1.width - frame.width) + abs($1.1.height - frame.height)
+            }?.0
+    }
+
     // Which of Left/Centre/Right Third another window currently occupies on this screen.
     private func occupiedThirds(excluding window: AXUIElement, on screen: NSScreen) -> Set<HState> {
         let candidates: [HState] = [.leftThird, .centerThird, .rightThird]
-        return occupiedStates(among: candidates.map { ($0, rect(for: $0, in: screen)) }, excluding: window)
+        return occupiedStates(
+            among: candidates.map { ($0, rect(for: $0, in: screen)) }, excluding: window,
+            looseWidth: true, looseHeight: false)
     }
 
     // Which of Top/Middle/Bottom Third another window currently occupies on this screen.
     private func vOccupiedThirds(excluding window: AXUIElement, on screen: NSScreen) -> Set<VState> {
         let candidates: [VState] = [.topThird, .middleThird, .bottomThird]
-        return occupiedStates(among: candidates.map { ($0, vRect(for: $0, in: screen)) }, excluding: window)
+        return occupiedStates(
+            among: candidates.map { ($0, vRect(for: $0, in: screen)) }, excluding: window,
+            looseWidth: false, looseHeight: true)
     }
 
     // Shared by occupiedThirds/vOccupiedThirds: which of the given candidate states —
@@ -447,8 +482,18 @@ final class WindowManager {
     // bounds currently match. A single CGWindowList query covers every on-screen
     // window in one shot, rather than walking each running app's AX tree (which would
     // mean a blocking IPC round-trip per app on every press).
+    //
+    // Uses the same loosened zoneMatch as recognizing the FOCUSED window's own zone
+    // (currentState/vCurrentState) rather than an exact framesMatch — another app's
+    // window can be just as clamped by its own minimum size as the focused one, and
+    // without this, a clamped Third would silently stop counting as occupied, letting
+    // this window land right on top of it instead of stepping to Centre Third/Two
+    // Thirds. No closest-fit tie-break is needed here (unlike currentQuarter): the
+    // three candidates for a given axis have distinct positions, so at most one can
+    // ever match a given window regardless of how loose the size check is.
     private func occupiedStates<State: Hashable>(
-        among candidates: [(State, NSRect)], excluding window: AXUIElement
+        among candidates: [(State, NSRect)], excluding window: AXUIElement,
+        looseWidth: Bool, looseHeight: Bool
     ) -> Set<State> {
         guard let excludeFrame = currentAppKitFrame(of: window),
               let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
@@ -468,7 +513,8 @@ final class WindowManager {
 
             let appKitFrame = NSRect(x: x, y: primaryH - (y + h), width: w, height: h)
             if Self.framesMatch(appKitFrame, excludeFrame) { continue }  // this is `window` itself
-            for (state, rect) in candidates where Self.framesMatch(appKitFrame, rect) {
+            for (state, rect) in candidates
+            where Self.zoneMatch(appKitFrame, rect, looseWidth: looseWidth, looseHeight: looseHeight) {
                 result.insert(state)
             }
         }
